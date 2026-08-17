@@ -12,6 +12,7 @@ public partial class MainWindow : Window
     private readonly SystemMonitorService _monitor = new();
     private readonly RustService _rust = new();
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private DateTime _lastServerValidationUtc = DateTime.MinValue;
     private bool _expirationRollbackStarted;
 
     public MainWindow()
@@ -28,6 +29,15 @@ public partial class MainWindow : Window
     private async Task TickAsync()
     {
         RefreshMetrics();
+
+        if (_license.IsLicensed && DateTime.UtcNow - _lastServerValidationUtc >= TimeSpan.FromMinutes(1))
+        {
+            _lastServerValidationUtc = DateTime.UtcNow;
+            try { await _license.ValidateRemoteAsync(LicenseEndpoint.Text); }
+            catch { /* keep local expiry protection if the server is temporarily unreachable */ }
+            RefreshStatus();
+        }
+
         if (_license.IsExpired && !_expirationRollbackStarted)
         {
             _expirationRollbackStarted = true;
@@ -37,10 +47,7 @@ public partial class MainWindow : Window
                 var restored = await _optimizer.RestoreAllAsync();
                 OperationStatus.Text = $"License expired. Automatically restored {restored} UndOpti changes.";
             }
-            catch (Exception ex)
-            {
-                OperationStatus.Text = $"Automatic rollback failed: {ex.Message}";
-            }
+            catch (Exception ex) { OperationStatus.Text = $"Automatic rollback failed: {ex.Message}"; }
             RefreshStatus();
         }
     }
@@ -104,7 +111,7 @@ public partial class MainWindow : Window
             OperationStatus.Text = "Contacting license server…";
             var ok = await _license.ActivateRemoteAsync(LicenseEndpoint.Text, LicenseKey.Text.Trim());
             OperationStatus.Text = ok ? "License activated successfully." : "License activation failed.";
-            if (ok) _expirationRollbackStarted = false;
+            if (ok) { _expirationRollbackStarted = false; _lastServerValidationUtc = DateTime.UtcNow; }
             RefreshStatus();
         }
         catch (Exception ex) { OperationStatus.Text = $"License server error: {ex.Message}"; }
