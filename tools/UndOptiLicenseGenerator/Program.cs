@@ -9,26 +9,35 @@ var privateKeyPath = Path.Combine(keyDir, privateKeyFileName);
 
 using var rsa = RSA.Create(3072);
 if (File.Exists(privateKeyPath))
-{
     rsa.ImportFromPem(File.ReadAllText(privateKeyPath));
-}
 else
 {
     File.WriteAllText(privateKeyPath, rsa.ExportRSAPrivateKeyPem(), new UTF8Encoding(false));
     File.SetAttributes(privateKeyPath, FileAttributes.Hidden);
     Console.WriteLine($"Created private signing key: {privateKeyPath}");
-    Console.WriteLine("Keep this file private. Anyone with it can create valid licenses.");
+    Console.WriteLine("KEEP THIS FILE PRIVATE. Anyone with it can create valid licenses.");
     Console.WriteLine();
-    Console.WriteLine("PUBLIC KEY — put this into OfflineLicenseVerifier.PublicKeyPem in the client source:");
+    Console.WriteLine("PUBLIC KEY — copy it to the client's OfflineLicenseVerifier configuration:");
     Console.WriteLine(rsa.ExportSubjectPublicKeyInfoPem());
-    Console.WriteLine();
 }
 
-Console.WriteLine("UndOpti Offline License Generator");
-Console.WriteLine("Plans: 1d, 7d, 30d, 1y, lifetime");
-Console.Write("Plan: ");
-var plan = (Console.ReadLine() ?? "").Trim().ToLowerInvariant();
-if (plan is not ("1d" or "7d" or "30d" or "1y" or "lifetime")) { Console.WriteLine("Invalid plan."); return; }
+Console.WriteLine("\nUndOpti Offline License Generator");
+Console.Write("Role (USER/HELPER/ADMIN/OWNER): ");
+var role = (Console.ReadLine() ?? "USER").Trim().ToUpperInvariant();
+if (role is not ("USER" or "HELPER" or "ADMIN" or "OWNER")) { Console.WriteLine("Invalid role."); return; }
+
+string plan;
+if (role == "OWNER")
+{
+    plan = "lifetime";
+    Console.WriteLine("OWNER license is always Lifetime.");
+}
+else
+{
+    Console.Write("Plan (1d/7d/30d/1y/lifetime): ");
+    plan = (Console.ReadLine() ?? "").Trim().ToLowerInvariant();
+    if (plan is not ("1d" or "7d" or "30d" or "1y" or "lifetime")) { Console.WriteLine("Invalid plan."); return; }
+}
 
 Console.Write("HWID (leave empty for first-run binding): ");
 var hwid = (Console.ReadLine() ?? "").Trim();
@@ -42,17 +51,31 @@ DateTimeOffset? expires = plan switch
     _ => null
 };
 
-var payload = new LicensePayload($"UND-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}", plan, created, expires, string.IsNullOrWhiteSpace(hwid) ? null : hwid);
-var canonical = string.Join("|", payload.Key.Trim().ToUpperInvariant(), payload.Plan.Trim().ToLowerInvariant(), payload.CreatedAt.ToUniversalTime().ToString("O"), payload.ExpiresAt?.ToUniversalTime().ToString("O") ?? "", payload.HardwareId?.Trim() ?? "");
+var payload = new LicensePayload(
+    $"UND-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}",
+    plan, role, created, expires, string.IsNullOrWhiteSpace(hwid) ? null : hwid);
+
+var canonical = string.Join("|",
+    payload.Key.Trim().ToUpperInvariant(),
+    payload.Plan.Trim().ToLowerInvariant(),
+    payload.Role.Trim().ToUpperInvariant(),
+    payload.CreatedAt.ToUniversalTime().ToString("O"),
+    payload.ExpiresAt?.ToUniversalTime().ToString("O") ?? "",
+    payload.HardwareId?.Trim() ?? "");
+
 var signature = rsa.SignData(Encoding.UTF8.GetBytes(canonical), HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
 var license = new SignedLicense(payload, Convert.ToBase64String(signature));
 var licenseDir = Path.Combine(AppContext.BaseDirectory, "licenses");
 Directory.CreateDirectory(licenseDir);
 var file = Path.Combine(licenseDir, payload.Key + ".license.json");
 File.WriteAllText(file, license.ToJson(), new UTF8Encoding(false));
-Console.WriteLine($"Created signed license: {file}");
+Console.WriteLine($"\nCreated {role} license: {file}");
+Console.WriteLine($"Key: {payload.Key}");
+Console.WriteLine($"Plan: {payload.Plan}");
+Console.WriteLine($"Role: {payload.Role}");
+Console.WriteLine($"Expires: {payload.ExpiresAt?.ToLocalTime().ToString() ?? "Never"}");
 
-record LicensePayload(string Key, string Plan, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, string? HardwareId);
+record LicensePayload(string Key, string Plan, string Role, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, string? HardwareId);
 record SignedLicense(LicensePayload Payload, string SignatureBase64)
 {
     public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
