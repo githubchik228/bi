@@ -16,7 +16,7 @@ public partial class App : Application
 
     private async void OnStartup(object sender, StartupEventArgs e)
     {
-        if (_license.HasExpired())
+        if (_license.HasExpired)
             await _optimizer.RestoreAllAsync();
     }
 }
