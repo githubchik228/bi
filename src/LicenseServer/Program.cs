@@ -28,16 +28,16 @@ app.MapPost("/v1/license/validate", (ValidateRequest request) =>
 
 app.MapPost("/v1/admin/keys", (CreateKeyRequest request, HttpRequest http) =>
 {
-    if (!Authorized(http)) return Results.Unauthorized();
+    if (!IsAuthorized(http)) return Results.Unauthorized();
     var record = Create(request.Plan);
     return record is null ? Results.BadRequest(new { error = "unsupported_plan" }) : Results.Ok(record);
 });
 
-app.MapGet("/v1/admin/keys", (HttpRequest http) => !Authorized(http) ? Results.Unauthorized() : Results.Ok(licenses.Values.OrderByDescending(x => x.CreatedAt)));
+app.MapGet("/v1/admin/keys", (HttpRequest http) => !IsAuthorized(http) ? Results.Unauthorized() : Results.Ok(licenses.Values.OrderByDescending(x => x.CreatedAt)));
 app.MapPost("/v1/admin/keys/{key}/revoke", (string key, HttpRequest http) => AdminAction(key, http, x => x.Status = "Revoked"));
 app.MapPost("/v1/admin/keys/{key}/unbind", (string key, HttpRequest http) => AdminAction(key, http, x => { x.HardwareId = null; x.ActivatedAt = null; }));
 
-AdminPanel.Map(app, authorization => Authorized(authorization), plan => Create(plan)?.Key, () => licenses.Values.OrderByDescending(x => x.CreatedAt).ToArray(), key => TryMutate(key, x => x.Status = "Revoked"), key => TryMutate(key, x => { x.HardwareId = null; x.ActivatedAt = null; }), (_, _) => false);
+AdminPanel.Map(app, authorization => IsAuthorizedHeader(authorization), plan => Create(plan)?.Key, () => licenses.Values.OrderByDescending(x => x.CreatedAt).ToArray(), key => TryMutate(key, x => x.Status = "Revoked"), key => TryMutate(key, x => { x.HardwareId = null; x.ActivatedAt = null; }), (_, _) => false);
 
 app.Run();
 
@@ -49,11 +49,16 @@ LicenseRecord? Create(string plan)
     var key = GenerateKey(); var record = new LicenseRecord { Key = key, Plan = plan, Status = "Active", CreatedAt = DateTimeOffset.UtcNow, ExpiresAt = expires }; licenses[key] = record; Save(); return record;
 }
 
-IResult AdminAction(string key, HttpRequest http, Action<LicenseRecord> action) => !Authorized(http) ? Results.Unauthorized() : TryMutate(key, action) ? Results.Ok(licenses[key.Trim().ToUpperInvariant()]) : Results.NotFound(new { error = "invalid_key" });
+IResult AdminAction(string key, HttpRequest http, Action<LicenseRecord> action) => !IsAuthorized(http) ? Results.Unauthorized() : TryMutate(key, action) ? Results.Ok(licenses[key.Trim().ToUpperInvariant()]) : Results.NotFound(new { error = "invalid_key" });
 bool TryMutate(string key, Action<LicenseRecord> action) { var normalized = key.Trim().ToUpperInvariant(); if (!licenses.TryGetValue(normalized, out var l)) return false; action(l); Save(); return true; }
 
-bool Authorized(HttpRequest request) => Authorized(request.Headers.Authorization.ToString());
-bool Authorized(string authorization) { var expected = Environment.GetEnvironmentVariable("UNDOPTI_ADMIN_TOKEN"); return !string.IsNullOrWhiteSpace(expected) && authorization == $"Bearer {expected}"; }
+bool IsAuthorized(HttpRequest request) => IsAuthorizedHeader(request.Headers.Authorization.ToString());
+bool IsAuthorizedHeader(string authorization)
+{
+    var expected = Environment.GetEnvironmentVariable("UNDOPTI_ADMIN_TOKEN");
+    return !string.IsNullOrWhiteSpace(expected) && string.Equals(authorization, $"Bearer {expected}", StringComparison.Ordinal);
+}
+
 Dictionary<string, LicenseRecord> Load() => File.Exists(storePath) ? JsonSerializer.Deserialize<Dictionary<string, LicenseRecord>>(File.ReadAllText(storePath)) ?? new() : new();
 void Save() => File.WriteAllText(storePath, JsonSerializer.Serialize(licenses, new JsonSerializerOptions { WriteIndented = true }));
 static string GenerateKey() => $"UND-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}";
