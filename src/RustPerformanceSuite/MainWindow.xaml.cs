@@ -1,125 +1,31 @@
 using System.Windows;
 using System.Windows.Threading;
-using RustPerformanceSuite.Services;
 
 namespace RustPerformanceSuite;
 
 public partial class MainWindow : Window
 {
-    private readonly LicenseService _license = new();
-    private readonly ChangeTracker _tracker = new();
-    private readonly OptimizationEngine _optimizer;
-    private readonly SystemMonitorService _monitor = new();
-    private readonly RustService _rust = new();
-    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private DateTime _lastServerValidationUtc = DateTime.MinValue;
-    private bool _expirationRollbackStarted;
-
-    public MainWindow()
-    {
+    readonly UndOptiRuntime _app = UndOptiRuntime.Instance;
+    readonly DispatcherTimer _timer = new(){Interval=TimeSpan.FromSeconds(1)};
+    DateTime _lastValidation=DateTime.MinValue;
+    bool _rolledBack;
+    public MainWindow(){
         InitializeComponent();
-        _optimizer = new OptimizationEngine(_tracker);
-        HardwareIdText.Text = $"HWID: {_license.HardwareId[..12]}…";
-        TweaksText.Text = $"{_optimizer.Tweaks.Count}";
-        RefreshStatus();
-        _timer.Tick += async (_, _) => await TickAsync();
-        _timer.Start();
+        HardwareIdText.Text=$"HWID: {_app.HardwareId[..12]}…";
+        TweaksText.Text=$"{_app.Changes.Count}";
+        RefreshStatus(); RefreshMetrics();
+        _timer.Tick += async (_,_)=>await TickAsync(); _timer.Start();
     }
-
-    private async Task TickAsync()
-    {
+    async Task TickAsync(){
         RefreshMetrics();
-
-        if (_license.IsLicensed && DateTime.UtcNow - _lastServerValidationUtc >= TimeSpan.FromMinutes(1))
-        {
-            _lastServerValidationUtc = DateTime.UtcNow;
-            try { await _license.ValidateRemoteAsync(LicenseEndpoint.Text); }
-            catch { /* keep local expiry protection if the server is temporarily unreachable */ }
-            RefreshStatus();
-        }
-
-        if (_license.IsExpired && !_expirationRollbackStarted)
-        {
-            _expirationRollbackStarted = true;
-            OperationStatus.Text = "License expired. Restoring UndOpti changes…";
-            try
-            {
-                var restored = await _optimizer.RestoreAllAsync();
-                OperationStatus.Text = $"License expired. Automatically restored {restored} UndOpti changes.";
-            }
-            catch (Exception ex) { OperationStatus.Text = $"Automatic rollback failed: {ex.Message}"; }
-            RefreshStatus();
-        }
+        if(_app.IsLicensed && DateTime.UtcNow-_lastValidation>=TimeSpan.FromMinutes(1)){_lastValidation=DateTime.UtcNow; await _app.ValidateAsync(LicenseEndpoint.Text); RefreshStatus();}
+        if(_app.License is not null && !_app.License.Active && !_rolledBack){_rolledBack=true; OperationStatus.Text="License expired — restoring UndOpti changes…"; var n=_app.Restore(); OperationStatus.Text=$"License expired. Restored {n} tracked changes."; RefreshStatus();}
     }
-
-    private void RefreshMetrics()
-    {
-        var sample = _monitor.Sample();
-        CpuText.Text = $"{sample.CpuPercent:0}%";
-        RamText.Text = $"{sample.MemoryPercent:0}%";
-        RustText.Text = _rust.IsRustRunning() ? "Running" : (_rust.FindInstall() is not null ? "Installed" : "Not detected");
-    }
-
-    private void RefreshStatus()
-    {
-        if (_license.IsLicensed)
-        {
-            LicenseStatus.Text = "● LICENSE ACTIVE";
-            LicenseStatus.Foreground = System.Windows.Media.Brushes.LightGreen;
-        }
-        else
-        {
-            LicenseStatus.Text = _license.IsExpired ? "● LICENSE EXPIRED" : "● LICENSE REQUIRED";
-            LicenseStatus.Foreground = System.Windows.Media.Brushes.Orange;
-        }
-    }
-
-    private async void Optimize_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_license.IsLicensed) { OperationStatus.Text = "A valid license is required."; return; }
-        try
-        {
-            OperationStatus.Text = "Applying reversible optimizations…";
-            var changes = await _optimizer.ApplyAllAsync();
-            OperationStatus.Text = $"Applied {changes.Count} changes. Backup records created.";
-        }
-        catch (Exception ex) { OperationStatus.Text = $"Optimization stopped: {ex.Message}"; }
-    }
-
-    private async void Restore_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var restored = await _optimizer.RestoreAllAsync();
-            OperationStatus.Text = $"Restored {restored} tracked changes.";
-        }
-        catch (Exception ex) { OperationStatus.Text = $"Restore stopped: {ex.Message}"; }
-    }
-
-    private void Refresh_Click(object sender, RoutedEventArgs e)
-    {
-        _license.Load();
-        _expirationRollbackStarted = false;
-        RefreshStatus();
-        RefreshMetrics();
-    }
-
-    private async void Activate_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            OperationStatus.Text = "Contacting license server…";
-            var ok = await _license.ActivateRemoteAsync(LicenseEndpoint.Text, LicenseKey.Text.Trim());
-            OperationStatus.Text = ok ? "License activated successfully." : "License activation failed.";
-            if (ok) { _expirationRollbackStarted = false; _lastServerValidationUtc = DateTime.UtcNow; }
-            RefreshStatus();
-        }
-        catch (Exception ex) { OperationStatus.Text = $"License server error: {ex.Message}"; }
-    }
-
-    protected override void OnClosed(EventArgs e)
-    {
-        _timer.Stop();
-        base.OnClosed(e);
-    }
+    void RefreshMetrics(){ CpuText.Text="Monitoring"; RamText.Text=$"{GC.GetGCMemoryInfo().TotalAvailableMemoryBytes/1073741824d:0.0} GB"; RustText.Text=_app.RustRunning()?"Running":"Not running"; }
+    void RefreshStatus(){ if(_app.IsLicensed){LicenseStatus.Text="● LICENSE ACTIVE"; LicenseStatus.Foreground=System.Windows.Media.Brushes.LightGreen;}else{LicenseStatus.Text=_app.License is not null?"● LICENSE EXPIRED":"● LICENSE REQUIRED";LicenseStatus.Foreground=System.Windows.Media.Brushes.Orange;} }
+    void Optimize_Click(object sender,RoutedEventArgs e){if(!_app.IsLicensed){OperationStatus.Text="A valid license is required.";return;} try{_app.ApplySafeProfile();TweaksText.Text=$"{_app.Changes.Count}";OperationStatus.Text=$"Applied {_app.Changes.Count} reversible changes.";}catch(Exception ex){OperationStatus.Text=$"Optimization stopped: {ex.Message}";}}
+    void Restore_Click(object sender,RoutedEventArgs e){try{var n=_app.Restore();TweaksText.Text=$"{_app.Changes.Count}";OperationStatus.Text=$"Restored {n} tracked changes.";}catch(Exception ex){OperationStatus.Text=$"Restore stopped: {ex.Message}";}}
+    void Refresh_Click(object sender,RoutedEventArgs e){RefreshStatus();RefreshMetrics();TweaksText.Text=$"{_app.Changes.Count}";}
+    async void Activate_Click(object sender,RoutedEventArgs e){OperationStatus.Text="Contacting license server…";var ok=await _app.ActivateAsync(LicenseEndpoint.Text,LicenseKey.Text.Trim());OperationStatus.Text=ok?"License activated successfully.":"License activation failed.";if(ok){_rolledBack=false;_lastValidation=DateTime.UtcNow;}RefreshStatus();}
+    protected override void OnClosed(EventArgs e){_timer.Stop();base.OnClosed(e);}
 }
