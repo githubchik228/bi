@@ -9,14 +9,9 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <AssemblyName>UndOpti</AssemblyName>
     <RootNamespace>RustPerformanceSuite</RootNamespace>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <ApplicationDefinition Include="App.xaml" />
-    <Compile Include="App.xaml.cs" />
-    <Compile Include="MainWindow.xaml.cs" />
-    <Compile Include="UndOptiRuntime.cs" />
-    <Page Include="MainWindow.xaml" />
+    <Compile Include="**/*.cs" Exclude="bin/**;obj/**" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Management" Version="8.0.0" />
