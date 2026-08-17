@@ -21,7 +21,8 @@ app.Run();
 
 public sealed record ActivateRequest(string Key, string HardwareId);
 public sealed record ValidateRequest(string Key, string HardwareId);
-public sealed record LicenseResponse(string Key, string Plan, DateTimeOffset ActivatedAt, DateTimeOffset? ExpiresAt, string HardwareId);
+public sealed record LicenseResponse(string Key, string Plan, LicenseRoleDto Role, DateTimeOffset ActivatedAt, DateTimeOffset? ExpiresAt, string HardwareId);
+public enum LicenseRoleDto { User, Helper, Admin, Owner }
 
 public sealed class LicenseStore
 {
@@ -34,8 +35,9 @@ public sealed class LicenseStore
         {
             var key = item["Key"];
             var plan = item["Plan"];
+            var role = item["Role"];
             if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(plan))
-                _licenses[key] = new StoredLicense(key, plan);
+                _licenses[key] = new StoredLicense(key, plan, ParseRole(role));
         }
     }
 
@@ -69,28 +71,32 @@ public sealed class LicenseStore
     }
 
     private static LicenseResponse ToResponse(StoredLicense x) =>
-        new(x.Key, x.Plan, x.ActivatedAt!.Value, x.ExpiresAt, x.HardwareId!);
+        new(x.Key, ToPlan(x.Plan), x.Role, x.ActivatedAt!.Value, x.ExpiresAt, x.HardwareId!);
+
+    private static string ToPlan(string plan) => plan switch
+    {
+        "1d" => "Day", "7d" => "SevenDays", "30d" => "Month", "1y" => "Year", "lifetime" => "Lifetime", _ => "Day"
+    };
+
+    private static LicenseRoleDto ParseRole(string? role) => Enum.TryParse<LicenseRoleDto>(role, true, out var value) ? value : LicenseRoleDto.User;
 
     private sealed class StoredLicense
     {
-        public StoredLicense(string key, string plan)
+        public StoredLicense(string key, string plan, LicenseRoleDto role)
         {
             Key = key;
             Plan = plan.ToLowerInvariant();
+            Role = role;
             Duration = Plan switch
             {
-                "1d" => TimeSpan.FromDays(1),
-                "7d" => TimeSpan.FromDays(7),
-                "30d" => TimeSpan.FromDays(30),
-                "1y" => TimeSpan.FromDays(365),
-                "lifetime" => TimeSpan.Zero,
-                _ => TimeSpan.MinValue
+                "1d" => TimeSpan.FromDays(1), "7d" => TimeSpan.FromDays(7), "30d" => TimeSpan.FromDays(30),
+                "1y" => TimeSpan.FromDays(365), "lifetime" => TimeSpan.Zero, _ => TimeSpan.MinValue
             };
             IsLifetime = Plan == "lifetime";
         }
-
         public string Key { get; }
         public string Plan { get; }
+        public LicenseRoleDto Role { get; }
         public TimeSpan Duration { get; }
         public bool IsLifetime { get; }
         public string? HardwareId { get; set; }
