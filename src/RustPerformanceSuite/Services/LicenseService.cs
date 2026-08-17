@@ -11,6 +11,7 @@ public sealed class LicenseService
     public string HardwareId => _hardwareId.GetHardwareId();
     public bool IsLicensed => Current?.IsActive == true && Current.HardwareId == HardwareId;
     public bool IsExpired => Current is not null && !Current.IsActive;
+    public bool HasExpired => IsExpired;
 
     public LicenseService() => Load();
     public void Load()
@@ -42,7 +43,7 @@ public sealed class LicenseService
         var license = await client.ValidateAsync(endpoint, Current.Key, HardwareId, token);
         if (license is null)
         {
-            if (Current.IsActive) return true; // temporary server/network failure; local expiry still applies
+            if (Current.IsActive) return true;
             return false;
         }
         return Activate(license);
