@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
@@ -30,20 +31,21 @@ app.MapPost("/v1/admin/keys", (CreateKeyRequest request, HttpRequest http) =>
 {
     var expected = Environment.GetEnvironmentVariable("RPS_ADMIN_TOKEN");
     if (string.IsNullOrWhiteSpace(expected) || http.Headers.Authorization != $"Bearer {expected}") return Results.Unauthorized();
+    var plan = request.Plan.ToLowerInvariant();
+    if (plan is not ("1d" or "7d" or "30d" or "1y" or "lifetime")) return Results.BadRequest(new { error = "unsupported_plan" });
     var key = GenerateKey();
-    DateTimeOffset? expires = request.Plan.ToLowerInvariant() switch
-    {
-        "1d" => DateTimeOffset.UtcNow.AddDays(1), "7d" => DateTimeOffset.UtcNow.AddDays(7), "30d" => DateTimeOffset.UtcNow.AddDays(30), "1y" => DateTimeOffset.UtcNow.AddYears(1), "lifetime" => null, _ => null
-    };
-    licenses[key] = new LicenseRecord { Key = key, Plan = request.Plan, ExpiresAt = expires, Role = "User" };
+    DateTimeOffset? expires = plan switch { "1d" => DateTimeOffset.UtcNow.AddDays(1), "7d" => DateTimeOffset.UtcNow.AddDays(7), "30d" => DateTimeOffset.UtcNow.AddDays(30), "1y" => DateTimeOffset.UtcNow.AddYears(1), _ => null };
+    var planName = plan switch { "1d" => "Day", "7d" => "SevenDays", "30d" => "Month", "1y" => "Year", _ => "Lifetime" };
+    licenses[key] = new LicenseRecord { Key = key, Plan = planName, ExpiresAt = expires, Role = "User" };
     Save();
     return Results.Ok(licenses[key]);
 });
 
 app.Run();
 
-Dictionary<string, LicenseRecord> Load() => File.Exists(storePath) ? JsonSerializer.Deserialize<Dictionary<string, LicenseRecord>>(File.ReadAllText(storePath)) ?? new() : new();
-void Save() => File.WriteAllText(storePath, JsonSerializer.Serialize(licenses, new JsonSerializerOptions { WriteIndented = true }));
+Dictionary<string, LicenseRecord> Load() => File.Exists(storePath) ? JsonSerializer.Deserialize<Dictionary<string, LicenseRecord>>(File.ReadAllText(storePath), JsonOptions()) ?? new() : new();
+void Save() => File.WriteAllText(storePath, JsonSerializer.Serialize(licenses, JsonOptions()));
+static JsonSerializerOptions JsonOptions() => new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 static string GenerateKey() => $"RPS-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}-{RandomNumberGenerator.GetHexString(4)}";
 record ActivateRequest(string Key, string HardwareId);
 record ValidateRequest(string Key);
