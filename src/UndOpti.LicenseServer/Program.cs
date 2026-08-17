@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,7 +21,7 @@ app.Run();
 
 public sealed record ActivateRequest(string Key, string HardwareId);
 public sealed record ValidateRequest(string Key, string HardwareId);
-public sealed record LicenseResponse(string Key, string Plan, DateTime ActivatedAtUtc, DateTime ExpiresAtUtc, string HardwareId);
+public sealed record LicenseResponse(string Key, string Plan, DateTimeOffset ActivatedAt, DateTimeOffset? ExpiresAt, string HardwareId);
 
 public sealed class LicenseStore
 {
@@ -32,8 +30,7 @@ public sealed class LicenseStore
 
     public LicenseStore(IConfiguration configuration)
     {
-        var configured = configuration.GetSection("Licenses").GetChildren();
-        foreach (var item in configured)
+        foreach (var item in configuration.GetSection("Licenses").GetChildren())
         {
             var key = item["Key"];
             var plan = item["Plan"];
@@ -46,11 +43,16 @@ public sealed class LicenseStore
     {
         lock (_gate)
         {
-            if (!_licenses.TryGetValue(key.Trim(), out var license) || string.IsNullOrWhiteSpace(hardwareId)) return null;
+            if (!_licenses.TryGetValue(key.Trim(), out var license) || string.IsNullOrWhiteSpace(hardwareId) || license.Revoked)
+                return null;
             if (license.HardwareId is not null && !license.HardwareId.Equals(hardwareId, StringComparison.OrdinalIgnoreCase)) return null;
-            if (license.ExpiresAtUtc <= DateTime.UtcNow) return null;
+
+            var now = DateTimeOffset.UtcNow;
+            if (license.ExpiresAt.HasValue && license.ExpiresAt <= now) return null;
             license.HardwareId ??= hardwareId;
-            license.ActivatedAtUtc ??= DateTime.UtcNow;
+            license.ActivatedAt ??= now;
+            if (!license.ExpiresAt.HasValue && !license.IsLifetime)
+                license.ExpiresAt = license.ActivatedAt.Value.Add(license.Duration);
             return ToResponse(license);
         }
     }
@@ -59,32 +61,41 @@ public sealed class LicenseStore
     {
         lock (_gate)
         {
-            if (!_licenses.TryGetValue(key.Trim(), out var license) || license.HardwareId != hardwareId || license.ExpiresAtUtc <= DateTime.UtcNow) return null;
+            if (!_licenses.TryGetValue(key.Trim(), out var license) || license.Revoked || license.HardwareId is null ||
+                !license.HardwareId.Equals(hardwareId, StringComparison.OrdinalIgnoreCase)) return null;
+            if (license.ExpiresAt.HasValue && license.ExpiresAt <= DateTimeOffset.UtcNow) return null;
             return ToResponse(license);
         }
     }
 
-    private static LicenseResponse ToResponse(StoredLicense x) => new(x.Key, x.Plan, x.ActivatedAtUtc!.Value, x.ExpiresAtUtc, x.HardwareId!);
+    private static LicenseResponse ToResponse(StoredLicense x) =>
+        new(x.Key, x.Plan, x.ActivatedAt!.Value, x.ExpiresAt, x.HardwareId!);
 
     private sealed class StoredLicense
     {
         public StoredLicense(string key, string plan)
         {
-            Key = key; Plan = plan;
-            ExpiresAtUtc = plan.ToLowerInvariant() switch
+            Key = key;
+            Plan = plan.ToLowerInvariant();
+            Duration = Plan switch
             {
-                "1d" => DateTime.UtcNow.AddDays(1),
-                "7d" => DateTime.UtcNow.AddDays(7),
-                "30d" => DateTime.UtcNow.AddDays(30),
-                "1y" => DateTime.UtcNow.AddYears(1),
-                "lifetime" => DateTime.MaxValue,
-                _ => DateTime.MinValue
+                "1d" => TimeSpan.FromDays(1),
+                "7d" => TimeSpan.FromDays(7),
+                "30d" => TimeSpan.FromDays(30),
+                "1y" => TimeSpan.FromDays(365),
+                "lifetime" => TimeSpan.Zero,
+                _ => TimeSpan.MinValue
             };
+            IsLifetime = Plan == "lifetime";
         }
+
         public string Key { get; }
         public string Plan { get; }
+        public TimeSpan Duration { get; }
+        public bool IsLifetime { get; }
         public string? HardwareId { get; set; }
-        public DateTime? ActivatedAtUtc { get; set; }
-        public DateTime ExpiresAtUtc { get; }
+        public DateTimeOffset? ActivatedAt { get; set; }
+        public DateTimeOffset? ExpiresAt { get; set; }
+        public bool Revoked { get; set; }
     }
 }
