@@ -1,9 +1,10 @@
-name: Build
+name: Build UndOpti
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build-windows:
@@ -15,10 +16,10 @@ jobs:
           dotnet-version: 8.0.x
       - name: Restore
         run: dotnet restore bi.sln
-      - name: Build WPF
+      - name: Publish UndOpti
         run: dotnet publish src/RustPerformanceSuite/RustPerformanceSuite.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
-      - name: Upload EXE
+      - name: Upload UndOpti
         uses: actions/upload-artifact@v4
         with:
-          name: RustPerformanceSuite-win-x64
+          name: UndOpti-win-x64
           path: publish/
