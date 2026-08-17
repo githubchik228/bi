@@ -37,7 +37,7 @@ app.MapGet("/v1/admin/keys", (HttpRequest http) => !Authorized(http) ? Results.U
 app.MapPost("/v1/admin/keys/{key}/revoke", (string key, HttpRequest http) => AdminAction(key, http, x => x.Status = "Revoked"));
 app.MapPost("/v1/admin/keys/{key}/unbind", (string key, HttpRequest http) => AdminAction(key, http, x => { x.HardwareId = null; x.ActivatedAt = null; }));
 
-AdminPanel.Map(app, Authorized, plan => Create(plan)?.Key, () => licenses.Values.OrderByDescending(x => x.CreatedAt).ToArray(), key => TryMutate(key, x => x.Status = "Revoked"), key => TryMutate(key, x => { x.HardwareId = null; x.ActivatedAt = null; }), (_, _) => false);
+AdminPanel.Map(app, authorization => Authorized(authorization), plan => Create(plan)?.Key, () => licenses.Values.OrderByDescending(x => x.CreatedAt).ToArray(), key => TryMutate(key, x => x.Status = "Revoked"), key => TryMutate(key, x => { x.HardwareId = null; x.ActivatedAt = null; }), (_, _) => false);
 
 app.Run();
 
