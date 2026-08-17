@@ -5,7 +5,7 @@ namespace RustPerformanceSuite.Services;
 
 public sealed class LicenseService
 {
-    private readonly string _file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RustPerformanceSuite", "license.json");
+    private readonly string _file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UndOpti", "license.json");
     private readonly HardwareIdService _hardwareId = new();
     public LicenseInfo? Current { get; private set; }
     public string HardwareId => _hardwareId.GetHardwareId();
@@ -33,5 +33,18 @@ public sealed class LicenseService
         var client = new RemoteLicenseClient();
         var license = await client.ActivateAsync(endpoint, key, HardwareId, token);
         return license is not null && Activate(license);
+    }
+
+    public async Task<bool> ValidateRemoteAsync(string endpoint, CancellationToken token = default)
+    {
+        if (Current is null || string.IsNullOrWhiteSpace(endpoint)) return false;
+        var client = new RemoteLicenseClient();
+        var license = await client.ValidateAsync(endpoint, Current.Key, HardwareId, token);
+        if (license is null)
+        {
+            if (Current.IsActive) return true; // temporary server/network failure; local expiry still applies
+            return false;
+        }
+        return Activate(license);
     }
 }
