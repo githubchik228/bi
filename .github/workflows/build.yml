@@ -1,27 +1,48 @@
 name: Build UndOpti
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: '8.0.x'
       - name: Restore
         run: dotnet restore bi.sln
       - name: Build solution
         run: dotnet build bi.sln -c Release --no-restore
       - name: Publish UndOpti
-        run: dotnet publish src/RustPerformanceSuite/RustPerformanceSuite.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/client
-      - name: Publish License Server
-        run: dotnet publish src/LicenseServer/LicenseServer.csproj -c Release -r win-x64 --self-contained true -o publish/server
-      - name: Upload release
+        run: >
+          dotnet publish src/RustPerformanceSuite/RustPerformanceSuite.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o artifacts/UndOpti
+      - name: Build Keygen
+        run: >
+          dotnet publish tools/UndOptiKeygen/UndOptiKeygen.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o artifacts/UndOptiKeygen
+      - name: Upload UndOpti
         uses: actions/upload-artifact@v4
         with:
-          name: UndOpti-win-x64
-          path: publish/
+          name: UndOpti
+          path: artifacts/UndOpti/
+      - name: Upload UndOpti Keygen
+        uses: actions/upload-artifact@v4
+        with:
+          name: UndOptiKeygen
+          path: artifacts/UndOptiKeygen/
