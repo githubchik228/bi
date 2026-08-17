@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
+using RustPerformanceSuite.OfflineLicensing;
 
 namespace RustPerformanceSuite;
 
@@ -22,16 +23,58 @@ public sealed class UndOptiRuntime
     public string Root { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"UndOpti");
     public string ChangesFile => Path.Combine(Root,"changes.json");
     public string LicenseFile => Path.Combine(Root,"license.json");
+    public string OfflineLicenseFile => Path.Combine(Root,"offline-license.json");
     public List<ChangeRecord> Changes { get; private set; } = [];
     public LicenseState? License { get; private set; }
     public string HardwareId { get; }
     private readonly HttpClient http = new(){Timeout=TimeSpan.FromSeconds(8)};
     private UndOptiRuntime(){ Directory.CreateDirectory(Root); HardwareId=CreateHardwareId(); Load(); }
 
-    void Load(){ try{ if(File.Exists(ChangesFile)) Changes=JsonSerializer.Deserialize<List<ChangeRecord>>(File.ReadAllText(ChangesFile))??[]; if(File.Exists(LicenseFile)) License=JsonSerializer.Deserialize<LicenseState>(File.ReadAllText(LicenseFile)); }catch{} }
+    void Load()
+    {
+        try
+        {
+            if(File.Exists(ChangesFile)) Changes=JsonSerializer.Deserialize<List<ChangeRecord>>(File.ReadAllText(ChangesFile))??[];
+            if(File.Exists(LicenseFile)) License=JsonSerializer.Deserialize<LicenseState>(File.ReadAllText(LicenseFile));
+            if(File.Exists(OfflineLicenseFile)) ValidateOfflineLicense();
+            if(License is { Active:false }) Restore();
+        }
+        catch { }
+    }
+
     void SaveChanges()=>File.WriteAllText(ChangesFile,JsonSerializer.Serialize(Changes,new JsonSerializerOptions{WriteIndented=true}));
     void SaveLicense()=>File.WriteAllText(LicenseFile,JsonSerializer.Serialize(License,new JsonSerializerOptions{WriteIndented=true}));
     static string CreateHardwareId(){ var s=$"{Environment.MachineName}|{Environment.OSVersion}|{Environment.ProcessorCount}"; return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)))[..32]; }
+
+    public bool ImportOfflineLicense(string path)
+    {
+        try
+        {
+            var signed = SignedLicense.Parse(File.ReadAllText(path));
+            if(!OfflineLicenseVerifier.Verify(signed, HardwareId, out _)) return false;
+            var p=signed.Payload;
+            License=new LicenseState(p.Key,p.Plan,p.CreatedAt,p.ExpiresAt,HardwareId);
+            File.Copy(path,OfflineLicenseFile,true);
+            SaveLicense();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    public bool ValidateOfflineLicense()
+    {
+        try
+        {
+            if(!File.Exists(OfflineLicenseFile)) return false;
+            var signed=SignedLicense.Parse(File.ReadAllText(OfflineLicenseFile));
+            if(!OfflineLicenseVerifier.Verify(signed,HardwareId,out _)) { License=null; Restore(); return false; }
+            var p=signed.Payload;
+            License=new LicenseState(p.Key,p.Plan,p.CreatedAt,p.ExpiresAt,HardwareId);
+            SaveLicense();
+            return true;
+        }
+        catch { License=null; Restore(); return false; }
+    }
 
     public async Task<bool> ActivateAsync(string endpoint,string key){
         try{ var r=await http.PostAsJsonAsync(endpoint.TrimEnd('/')+"/v1/license/activate",new{Key=key,HardwareId}); if(!r.IsSuccessStatusCode)return false; var dto=await r.Content.ReadFromJsonAsync<ServerLicense>(); if(dto is null)return false; License=new LicenseState(dto.Key,dto.Plan,dto.ActivatedAt,dto.ExpiresAt,HardwareId); SaveLicense(); return true; }catch{return false;}
@@ -42,6 +85,7 @@ public sealed class UndOptiRuntime
     }
     public bool IsLicensed=>License?.Active==true && License.HardwareId==HardwareId;
     public void ApplySafeProfile(){
+        if(!IsLicensed) return;
         SetDword("GameMode",@"Software\Microsoft\GameBar","AutoGameModeEnabled",1);
         SetDword("GameDVR",@"SystemGameConfigStore","GameDVR_Enabled",0);
         SetDword("AppCapture",@"Software\Microsoft\Windows\CurrentVersion\GameDVR","AppCaptureEnabled",0);
