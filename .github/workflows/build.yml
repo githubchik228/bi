@@ -1,13 +1,11 @@
 name: Build UndOpti
-
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,9 +14,13 @@ jobs:
           dotnet-version: 8.0.x
       - name: Restore
         run: dotnet restore bi.sln
+      - name: Build solution
+        run: dotnet build bi.sln -c Release --no-restore
       - name: Publish UndOpti
-        run: dotnet publish src/RustPerformanceSuite/RustPerformanceSuite.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
-      - name: Upload UndOpti
+        run: dotnet publish src/RustPerformanceSuite/RustPerformanceSuite.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/client
+      - name: Publish License Server
+        run: dotnet publish src/LicenseServer/LicenseServer.csproj -c Release -r win-x64 --self-contained true -o publish/server
+      - name: Upload release
         uses: actions/upload-artifact@v4
         with:
           name: UndOpti-win-x64
