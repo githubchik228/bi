@@ -12,6 +12,7 @@ public partial class MainWindow : Window
     private readonly SystemMonitorService _monitor = new();
     private readonly RustService _rust = new();
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private bool _expirationRollbackStarted;
 
     public MainWindow()
     {
@@ -20,8 +21,28 @@ public partial class MainWindow : Window
         HardwareIdText.Text = $"HWID: {_license.HardwareId[..12]}…";
         TweaksText.Text = $"{_optimizer.Tweaks.Count}";
         RefreshStatus();
-        _timer.Tick += (_, _) => RefreshMetrics();
+        _timer.Tick += async (_, _) => await TickAsync();
         _timer.Start();
+    }
+
+    private async Task TickAsync()
+    {
+        RefreshMetrics();
+        if (_license.IsExpired && !_expirationRollbackStarted)
+        {
+            _expirationRollbackStarted = true;
+            OperationStatus.Text = "License expired. Restoring UndOpti changes…";
+            try
+            {
+                var restored = await _optimizer.RestoreAllAsync();
+                OperationStatus.Text = $"License expired. Automatically restored {restored} UndOpti changes.";
+            }
+            catch (Exception ex)
+            {
+                OperationStatus.Text = $"Automatic rollback failed: {ex.Message}";
+            }
+            RefreshStatus();
+        }
     }
 
     private void RefreshMetrics()
@@ -68,7 +89,13 @@ public partial class MainWindow : Window
         catch (Exception ex) { OperationStatus.Text = $"Restore stopped: {ex.Message}"; }
     }
 
-    private void Refresh_Click(object sender, RoutedEventArgs e) { _license.Load(); RefreshStatus(); RefreshMetrics(); }
+    private void Refresh_Click(object sender, RoutedEventArgs e)
+    {
+        _license.Load();
+        _expirationRollbackStarted = false;
+        RefreshStatus();
+        RefreshMetrics();
+    }
 
     private async void Activate_Click(object sender, RoutedEventArgs e)
     {
@@ -77,8 +104,15 @@ public partial class MainWindow : Window
             OperationStatus.Text = "Contacting license server…";
             var ok = await _license.ActivateRemoteAsync(LicenseEndpoint.Text, LicenseKey.Text.Trim());
             OperationStatus.Text = ok ? "License activated successfully." : "License activation failed.";
+            if (ok) _expirationRollbackStarted = false;
             RefreshStatus();
         }
         catch (Exception ex) { OperationStatus.Text = $"License server error: {ex.Message}"; }
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _timer.Stop();
+        base.OnClosed(e);
     }
 }
