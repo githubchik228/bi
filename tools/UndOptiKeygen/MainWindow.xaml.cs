@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 namespace UndOptiKeygen;
 public partial class MainWindow : Window
 {
