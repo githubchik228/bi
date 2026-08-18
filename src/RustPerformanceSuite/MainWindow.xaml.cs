@@ -1,38 +1,295 @@
+using System;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Windows;
-using System.Windows.Threading;
-using RustPerformanceSuite.Services;
 
-namespace RustPerformanceSuite;
+namespace UndOptiKeygen;
 
 public partial class MainWindow : Window
 {
-    readonly UndOptiRuntime _app = UndOptiRuntime.Instance;
-    readonly DispatcherTimer _timer = new(){Interval=TimeSpan.FromSeconds(1)};
-    readonly SystemMonitor _monitor = new();
-    readonly HardwareAnalyzer _hardware = new();
-    readonly RustProfileService _profiles = new();
-    DateTime _lastValidation=DateTime.MinValue;
-    bool _rolledBack;
+    private readonly RSA _rsa;
+    private readonly string _keyDirectory;
+    private readonly string _privateKeyPath;
+    private readonly string _publicKeyPath;
 
-    public MainWindow(){
+    public MainWindow()
+    {
         InitializeComponent();
-        HardwareIdText.Text=$"HWID: {_app.HardwareId[..12]}…";
-        TweaksText.Text=$"{_app.Changes.Count} / {TweakCatalog.All.Count}";
-        _monitor.CpuUpdated += v => Dispatcher.Invoke(() => CpuText.Text = $"{v:0.0}%");
-        _monitor.RamUpdated += v => Dispatcher.Invoke(() => RamText.Text = $"{v:0.0} MB");
-        RefreshStatus(); RefreshMetrics();
-        _timer.Tick += async (_,_)=>await TickAsync(); _timer.Start();
+
+        _keyDirectory = Path.Combine(
+            Environment.GetFolderPath(
+                Environment.SpecialFolder.LocalApplicationData),
+            "UndOpti",
+            "Licensing");
+
+        Directory.CreateDirectory(_keyDirectory);
+
+        _privateKeyPath = Path.Combine(
+            _keyDirectory,
+            "undopti-private.pem");
+
+        _publicKeyPath = Path.Combine(
+            _keyDirectory,
+            "undopti-public.pem");
+
+        _rsa = RSA.Create(3072);
+
+        LoadOrCreateKeys();
+
+        HwidBox.Text = GetHardwareId();
     }
-    async Task TickAsync(){
-        RefreshMetrics();
-        if(_app.IsLicensed && DateTime.UtcNow-_lastValidation>=TimeSpan.FromMinutes(1)){_lastValidation=DateTime.UtcNow; await _app.ValidateAsync(LicenseEndpoint.Text); RefreshStatus();}
-        if(_app.License is not null && !_app.License.Active && !_rolledBack){_rolledBack=true; OperationStatus.Text="License expired — restoring UndOpti changes…"; var n=_app.Restore(); OperationStatus.Text=$"License expired. Restored {n} tracked changes."; RefreshStatus();}
+
+    private void LoadOrCreateKeys()
+    {
+        if (File.Exists(_privateKeyPath))
+        {
+            _rsa.ImportFromPem(
+                File.ReadAllText(_privateKeyPath));
+        }
+        else
+        {
+            File.WriteAllText(
+                _privateKeyPath,
+                _rsa.ExportRSAPrivateKeyPem(),
+                new UTF8Encoding(false));
+        }
+
+        if (!File.Exists(_publicKeyPath))
+        {
+            File.WriteAllText(
+                _publicKeyPath,
+                _rsa.ExportRSAPublicKeyPem(),
+                new UTF8Encoding(false));
+        }
+
+        try
+        {
+            File.SetAttributes(
+                _privateKeyPath,
+                FileAttributes.Hidden);
+        }
+        catch
+        {
+            // Optional.
+        }
+
+        StatusBox.Text =
+            "Signing keys ready.\n\n" +
+            $"Private key:\n{_privateKeyPath}\n\n" +
+            $"Public key:\n{_publicKeyPath}";
     }
-    void RefreshMetrics(){ RustText.Text=_app.RustRunning()?"Running":"Not running"; }
-    void RefreshStatus(){ if(_app.IsLicensed){LicenseStatus.Text="● LICENSE ACTIVE"; LicenseStatus.Foreground=System.Windows.Media.Brushes.LightGreen;}else{LicenseStatus.Text=_app.License is not null?"● LICENSE EXPIRED":"● LICENSE REQUIRED";LicenseStatus.Foreground=System.Windows.Media.Brushes.Orange;} }
-    void Optimize_Click(object sender,RoutedEventArgs e){if(!_app.IsLicensed){OperationStatus.Text="A valid license is required.";return;} try{_app.ApplySafeProfile();TweaksText.Text=$"{_app.Changes.Count} / {TweakCatalog.All.Count}";OperationStatus.Text=$"Applied {_app.Changes.Count} supported reversible tweaks. {TweakCatalog.All.Count} checks are available in the catalog.";}catch(Exception ex){OperationStatus.Text=$"Optimization stopped: {ex.Message}";}}
-    void Restore_Click(object sender,RoutedEventArgs e){try{var n=_app.Restore();TweaksText.Text=$"{_app.Changes.Count} / {TweakCatalog.All.Count}";OperationStatus.Text=$"Restored {n} tracked changes.";}catch(Exception ex){OperationStatus.Text=$"Restore stopped: {ex.Message}";}}
-    void Refresh_Click(object sender,RoutedEventArgs e){RefreshStatus();RefreshMetrics();TweaksText.Text=$"{_app.Changes.Count} / {TweakCatalog.All.Count}";}
-    async void Activate_Click(object sender,RoutedEventArgs e){OperationStatus.Text="Contacting license server…";var ok=await _app.ActivateAsync(LicenseEndpoint.Text,LicenseKey.Text.Trim());OperationStatus.Text=ok?"License activated successfully.":"License activation failed.";if(ok){_rolledBack=false;_lastValidation=DateTime.UtcNow;}RefreshStatus();}
-    protected override void OnClosed(EventArgs e){_timer.Stop();_monitor.Dispose();base.OnClosed(e);}
+
+    private void GenerateButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        try
+        {
+            var plan = GetSelectedPlan();
+
+            var createdAt =
+                DateTimeOffset.UtcNow;
+
+            DateTimeOffset? expiresAt =
+                plan switch
+                {
+                    "Day" =>
+                        createdAt.AddDays(1),
+
+                    "SevenDays" =>
+                        createdAt.AddDays(7),
+
+                    "Month" =>
+                        createdAt.AddDays(30),
+
+                    "Year" =>
+                        createdAt.AddYears(1),
+
+                    "Lifetime" =>
+                        null,
+
+                    _ =>
+                        createdAt.AddDays(30)
+                };
+
+            var key =
+                GenerateLicenseKey();
+
+            var hardwareId =
+                string.IsNullOrWhiteSpace(HwidBox.Text)
+                    ? null
+                    : HwidBox.Text.Trim();
+
+            var payload =
+                new LicensePayload(
+                    key,
+                    plan,
+                    createdAt,
+                    expiresAt,
+                    hardwareId);
+
+            var canonical =
+                CanonicalPayload(payload);
+
+            var signature =
+                _rsa.SignData(
+                    Encoding.UTF8.GetBytes(canonical),
+                    HashAlgorithmName.SHA256,
+                    RSASignaturePadding.Pss);
+
+            var license =
+                new SignedLicense(
+                    payload,
+                    Convert.ToBase64String(signature));
+
+            var outputDirectory =
+                Path.Combine(
+                    AppContext.BaseDirectory,
+                    "licenses");
+
+            Directory.CreateDirectory(
+                outputDirectory);
+
+            var outputPath =
+                Path.Combine(
+                    outputDirectory,
+                    $"{key}.license.json");
+
+            var json =
+                JsonSerializer.Serialize(
+                    license,
+                    new JsonSerializerOptions
+                    {
+                        WriteIndented = true
+                    });
+
+            File.WriteAllText(
+                outputPath,
+                json,
+                new UTF8Encoding(false));
+
+            KeyBox.Text = key;
+
+            StatusBox.Text =
+                "LICENSE CREATED\n\n" +
+                $"Key: {key}\n" +
+                $"Plan: {plan}\n" +
+                $"HWID: {hardwareId ?? "Not bound"}\n" +
+                $"Expires: " +
+                (expiresAt.HasValue
+                    ? expiresAt.Value
+                        .ToLocalTime()
+                        .ToString("yyyy-MM-dd HH:mm:ss")
+                    : "Never") +
+                "\n\n" +
+                $"License:\n{outputPath}\n\n" +
+                $"Public key:\n{_publicKeyPath}";
+        }
+        catch (Exception ex)
+        {
+            StatusBox.Text =
+                "LICENSE GENERATION FAILED\n\n" +
+                ex.Message;
+        }
+    }
+
+    private string GetSelectedPlan()
+    {
+        if (PlanBox.SelectedItem is
+            System.Windows.Controls.ComboBoxItem item &&
+            item.Content != null)
+        {
+            var value =
+                item.Content
+                    .ToString()!
+                    .Trim();
+
+            return value switch
+            {
+                "1 day" => "Day",
+                "7 days" => "SevenDays",
+                "30 days" => "Month",
+                "1 year" => "Year",
+                "Lifetime" => "Lifetime",
+
+                "Day" => "Day",
+                "SevenDays" => "SevenDays",
+                "Month" => "Month",
+                "Year" => "Year",
+                "Lifetime" => "Lifetime",
+
+                _ => "Month"
+            };
+        }
+
+        return "Month";
+    }
+
+    private static string GenerateLicenseKey()
+    {
+        return
+            "UND-" +
+            RandomNumberGenerator.GetHexString(4) +
+            "-" +
+            RandomNumberGenerator.GetHexString(4) +
+            "-" +
+            RandomNumberGenerator.GetHexString(4) +
+            "-" +
+            RandomNumberGenerator.GetHexString(4);
+    }
+
+    private static string GetHardwareId()
+    {
+        using var sha =
+            SHA256.Create();
+
+        var raw =
+            Environment.MachineName;
+
+        var hash =
+            sha.ComputeHash(
+                Encoding.UTF8.GetBytes(raw));
+
+        return Convert.ToHexString(hash);
+    }
+
+    private static string CanonicalPayload(
+        LicensePayload payload)
+    {
+        return string.Join(
+            "|",
+            payload.Key
+                .Trim()
+                .ToUpperInvariant(),
+
+            payload.Plan
+                .Trim()
+                .ToLowerInvariant(),
+
+            payload.CreatedAt
+                .ToUniversalTime()
+                .ToString("O"),
+
+            payload.ExpiresAt?
+                .ToUniversalTime()
+                .ToString("O")
+                ?? "",
+
+            payload.HardwareId?
+                .Trim()
+                ?? "");
+    }
+
+    private sealed record LicensePayload(
+        string Key,
+        string Plan,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset? ExpiresAt,
+        string? HardwareId);
+
+    private sealed record SignedLicense(
+        LicensePayload Payload,
+        string SignatureBase64);
 }
