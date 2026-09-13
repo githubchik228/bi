@@ -1,47 +1,33 @@
-# Rust Performance Suite
+# UndOpti
 
-Windows WPF/.NET 8 performance utility for Rust with reversible system changes and server-backed time-limited licenses.
+Windows WPF/.NET 8 performance utility for gaming PCs, focused on Rust. The application is standalone: **no keys, licenses, license server, or activation are required**.
 
-## Current implementation
+## Features
 
 - WPF dashboard for Windows x64
-- License server with 1d / 7d / 30d / 1y / lifetime plans
-- HWID binding
-- Automatic rollback when a locally stored license expires
+- Hardware scan: CPU, GPU, RAM, motherboard and driver information
+- Live CPU/RAM/Rust monitoring
+- Reversible Windows Game Mode / Game DVR / transparency optimization
+- Temporary-file cleaner
+- DNS cache flush utility
+- High-performance power-plan selection
+- Rust competitive profile integration
 - Persistent change tracker with conflict-safe restore
-- Reversible power-plan optimization
-- Reversible Windows Game Mode / Game DVR / transparency tweaks
-- Rust installation/process detection
-- Basic live CPU and RAM monitoring
-- GitHub Actions self-contained Windows EXE publishing
-
-## License server
-
-Run:
-
-```powershell
-$env:RPS_ADMIN_TOKEN = "change-this-secret"
-dotnet run --project src/LicenseServer/LicenseServer.csproj
-```
-
-Create a key:
-
-```powershell
-curl -X POST http://localhost:5000/v1/admin/keys -H "Authorization: Bearer change-this-secret" -H "Content-Type: application/json" -d '{"plan":"30d"}'
-```
-
-The client sends the machine HWID to `/v1/license/activate`. The server binds a key to the first HWID that activates it.
+- Hardware/BIOS analysis and OC/undervolt advisor
+- Single-file self-contained Windows EXE publishing
 
 ## Safety model
 
-Every system change stores its original and applied values. Restore only runs when the current value still equals the value written by the optimizer. This prevents the optimizer from silently overwriting a change made manually after optimization.
+System changes that are tracked store their original and applied values. Restore only runs when the current value still equals the value written by UndOpti. This prevents the optimizer from silently overwriting a manual change made after optimization.
+
+BIOS flashing and blind voltage/clock writes are not performed automatically. Advanced CPU/GPU/RAM tuning must be matched to the exact hardware and tested for stability.
 
 The application does not disable Windows security or attempt to bypass Rust/EAC protections.
 
 ## Build
 
 ```powershell
-dotnet restore bi.sln
-dotnet build bi.sln -c Release
+dotnet restore src/RustPerformanceSuite/RustPerformanceSuite.csproj
+dotnet build src/RustPerformanceSuite/RustPerformanceSuite.csproj -c Release
 dotnet publish src/RustPerformanceSuite/RustPerformanceSuite.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
 ```
