@@ -1,28 +1,27 @@
 # UndOpti
 
-Windows WPF/.NET 8 performance utility for gaming PCs, focused on Rust. The application is standalone: **no keys, licenses, license server, or activation are required**.
+Windows WPF/.NET 8 performance suite for gaming PCs, focused on Rust. The app is standalone: **no keys, licenses, license server, or activation are required**.
 
-## Features
+## Included
 
-- WPF dashboard for Windows x64
-- Hardware scan: CPU, GPU, RAM, motherboard and driver information
 - Live CPU/RAM/Rust monitoring
-- Reversible Windows Game Mode / Game DVR / transparency optimization
-- Temporary-file cleaner
-- DNS cache flush utility
-- High-performance power-plan selection
-- Rust competitive profile integration
-- Persistent change tracker with conflict-safe restore
-- Hardware/BIOS analysis and OC/undervolt advisor
-- Single-file self-contained Windows EXE publishing
+- Hardware scan: CPU, GPU, RAM, motherboard and GPU driver
+- One-click Windows gaming profile with reversible tracked registry changes
+- Rust Competitive profile and session-only AboveNormal process priority
+- Temporary-file cleaner and DirectX shader-cache cleaner
+- DNS flush and network diagnostics with latency check
+- High-performance power plan with saved previous-plan restore
+- Startup report without automatically disabling startup programs
+- Hardware / BIOS / XMP / EXPO / CPU / GPU tuning advisor
+- Performance recommendations based on detected hardware
+- Restore of tracked registry changes and saved power-plan state
+- Self-contained Windows x64 publishing
 
-## Safety model
+## Safety
 
-System changes that are tracked store their original and applied values. Restore only runs when the current value still equals the value written by UndOpti. This prevents the optimizer from silently overwriting a manual change made after optimization.
+UndOpti does not flash BIOS firmware, write blind CPU/GPU voltages or clocks, disable Windows security, modify Rust files, or bypass Rust/EAC protections. Advanced tuning is advisory and should be matched to the exact hardware and stability-tested.
 
-BIOS flashing and blind voltage/clock writes are not performed automatically. Advanced CPU/GPU/RAM tuning must be matched to the exact hardware and tested for stability.
-
-The application does not disable Windows security or attempt to bypass Rust/EAC protections.
+Tracked registry changes are restored only when the current value still matches the value UndOpti wrote. This avoids silently overwriting a manual change made later.
 
 ## Build
 
