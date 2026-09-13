@@ -22,6 +22,8 @@ public partial class MainWindow : Window
         _timer.Start();
         RefreshMetrics();
         ShowHardwareReport();
+        RecommendationsText.Text = _suite.PerformanceRecommendations();
+        DiagnosticsText.Text = _suite.NetworkReport();
     }
 
     void RefreshMetrics()
@@ -38,7 +40,7 @@ public partial class MainWindow : Window
 
     void SetStatus(string text, bool good = true)
     {
-        StatusText.Text = text;
+        StatusText.Text = good ? "READY" : "CHECK";
         StatusText.Foreground = good ? System.Windows.Media.Brushes.LightGreen : System.Windows.Media.Brushes.Orange;
         OperationStatus.Text = text;
         ChangesText.Text = $"CHANGES {_app.Changes.Count}";
@@ -56,7 +58,9 @@ public partial class MainWindow : Window
             var windows = _suite.OptimizeWindows();
             var power = _suite.SelectHighPerformancePowerPlan();
             var dns = _suite.FlushDns();
-            SetStatus($"Optimization complete: {windows.Count(x => x.Changed)} Windows changes, power plan={power.Changed}, DNS={dns.Changed}.");
+            var rust = _suite.SetRustPriority();
+            SetStatus($"Full optimization finished. Windows={windows.Count(x => x.Changed)}, power={power.Changed}, DNS={dns.Changed}, Rust priority={rust.Changed}.");
+            DiagnosticsText.Text = _suite.NetworkReport();
         }
         catch (Exception ex) { SetStatus("Optimization error: " + ex.Message, false); }
     }
@@ -66,7 +70,7 @@ public partial class MainWindow : Window
         try
         {
             var r = _suite.OptimizeWindows();
-            SetStatus($"Windows optimization: {r.Count(x => x.Changed)} changes applied.");
+            SetStatus($"Windows gaming profile: {r.Count(x => x.Changed)} new tracked change(s).");
         }
         catch (Exception ex) { SetStatus("Windows optimization failed: " + ex.Message, false); }
     }
@@ -76,7 +80,7 @@ public partial class MainWindow : Window
         try
         {
             var r = _suite.CleanTempFiles();
-            SetStatus($"Cleaner finished: {r.Sum(x => x.Changed ? 1 : 0)} locations processed.");
+            SetStatus($"Cleaner finished: {r.Count(x => x.Changed)} cleanup action(s) changed something.");
         }
         catch (Exception ex) { SetStatus("Cleaner failed: " + ex.Message, false); }
     }
@@ -84,33 +88,67 @@ public partial class MainWindow : Window
     void Network_Click(object sender, RoutedEventArgs e)
     {
         var r = _suite.FlushDns();
+        DiagnosticsText.Text = _suite.NetworkReport();
         SetStatus(r.Details.Length > 0 ? $"Network: {r.Details}" : "DNS cache flushed.", r.Changed);
+    }
+
+    void NetworkTest_Click(object sender, RoutedEventArgs e)
+    {
+        DiagnosticsText.Text = _suite.NetworkReport();
+        SetStatus("Network diagnostics refreshed.");
     }
 
     void Power_Click(object sender, RoutedEventArgs e)
     {
         var r = _suite.SelectHighPerformancePowerPlan();
-        SetStatus(r.Changed ? "High-performance power plan selected." : "Power plan was not changed.", r.Changed);
+        SetStatus(r.Details, r.Changed);
+    }
+
+    void RestorePower_Click(object sender, RoutedEventArgs e)
+    {
+        var r = _suite.RestorePowerPlan();
+        SetStatus(r.Details, r.Changed);
     }
 
     void Hardware_Click(object sender, RoutedEventArgs e)
     {
         ShowHardwareReport();
-        SetStatus("Hardware analysis refreshed. OC/undervolt recommendations are hardware-specific.");
+        RecommendationsText.Text = _suite.PerformanceRecommendations();
+        SetStatus("Hardware and BIOS advisor refreshed. No firmware or blind voltage changes were made.");
     }
 
     void Rust_Click(object sender, RoutedEventArgs e)
     {
         var profile = _profiles.Describe(RustProfile.Competitive);
-        SetStatus("Rust Competitive profile selected: " + profile);
+        var results = _suite.OptimizeRust();
+        SetStatus("Rust Competitive profile: " + profile + $" Priority action changed={results.Last().Changed}.");
+    }
+
+    void RustPriority_Click(object sender, RoutedEventArgs e)
+    {
+        var r = _suite.SetRustPriority();
+        SetStatus(r.Details, r.Changed);
+    }
+
+    void Shader_Click(object sender, RoutedEventArgs e)
+    {
+        var r = _suite.CleanShaderCache();
+        SetStatus(r.Details, r.Changed);
+    }
+
+    void Startup_Click(object sender, RoutedEventArgs e)
+    {
+        DiagnosticsText.Text = "STARTUP REPORT\n\n" + _suite.StartupReport();
+        SetStatus("Startup report generated. No startup applications were disabled automatically.");
     }
 
     void Restore_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            var n = _app.Restore();
-            SetStatus($"Restored {n} tracked changes.");
+            var registry = _app.Restore();
+            var power = _suite.RestorePowerPlan();
+            SetStatus($"Restore finished: {registry} tracked registry change(s); power plan restored={power.Changed}.");
         }
         catch (Exception ex) { SetStatus("Restore failed: " + ex.Message, false); }
     }
@@ -119,6 +157,8 @@ public partial class MainWindow : Window
     {
         RefreshMetrics();
         ShowHardwareReport();
+        RecommendationsText.Text = _suite.PerformanceRecommendations();
+        DiagnosticsText.Text = _suite.NetworkReport();
         SetStatus("Dashboard refreshed.");
     }
 
