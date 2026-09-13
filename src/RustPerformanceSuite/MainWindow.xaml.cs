@@ -7,32 +7,125 @@ namespace RustPerformanceSuite;
 public partial class MainWindow : Window
 {
     readonly UndOptiRuntime _app = UndOptiRuntime.Instance;
-    readonly DispatcherTimer _timer = new(){Interval=TimeSpan.FromSeconds(1)};
+    readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
     readonly SystemMonitor _monitor = new();
     readonly HardwareAnalyzer _hardware = new();
     readonly RustProfileService _profiles = new();
-    DateTime _lastValidation=DateTime.MinValue;
-    bool _rolledBack;
+    readonly OptimizationSuite _suite = new();
 
-    public MainWindow(){
+    public MainWindow()
+    {
         InitializeComponent();
-        HardwareIdText.Text=$"HWID: {_app.HardwareId[..12]}…";
-        TweaksText.Text=$"{_app.Changes.Count} / {TweakCatalog.All.Count}";
-        _monitor.CpuUpdated += v => Dispatcher.Invoke(() => CpuText.Text = $"{v:0.0}%");
-        _monitor.RamUpdated += v => Dispatcher.Invoke(() => RamText.Text = $"{v:0.0} MB");
-        RefreshStatus(); RefreshMetrics();
-        _timer.Tick += async (_,_)=>await TickAsync(); _timer.Start();
-    }
-    async Task TickAsync(){
+        _monitor.CpuUpdated += v => Dispatcher.Invoke(() => CpuText.Text = $"CPU {v:0}%");
+        _monitor.RamUpdated += v => Dispatcher.Invoke(() => RamText.Text = $"RAM {v:0} MB free");
+        _timer.Tick += (_, _) => RefreshMetrics();
+        _timer.Start();
         RefreshMetrics();
-        if(_app.IsLicensed && DateTime.UtcNow-_lastValidation>=TimeSpan.FromMinutes(1)){_lastValidation=DateTime.UtcNow; await _app.ValidateAsync(LicenseEndpoint.Text); RefreshStatus();}
-        if(_app.License is not null && !_app.License.Active && !_rolledBack){_rolledBack=true; OperationStatus.Text="License expired — restoring UndOpti changes…"; var n=_app.Restore(); OperationStatus.Text=$"License expired. Restored {n} tracked changes."; RefreshStatus();}
+        ShowHardwareReport();
     }
-    void RefreshMetrics(){ RustText.Text=_app.RustRunning()?"Running":"Not running"; }
-    void RefreshStatus(){ if(_app.IsLicensed){LicenseStatus.Text="● LICENSE ACTIVE"; LicenseStatus.Foreground=System.Windows.Media.Brushes.LightGreen;}else{LicenseStatus.Text=_app.License is not null?"● LICENSE EXPIRED":"● LICENSE REQUIRED";LicenseStatus.Foreground=System.Windows.Media.Brushes.Orange;} }
-    void Optimize_Click(object sender,RoutedEventArgs e){if(!_app.IsLicensed){OperationStatus.Text="A valid license is required.";return;} try{_app.ApplySafeProfile();TweaksText.Text=$"{_app.Changes.Count} / {TweakCatalog.All.Count}";OperationStatus.Text=$"Applied {_app.Changes.Count} supported reversible tweaks. {TweakCatalog.All.Count} checks are available in the catalog.";}catch(Exception ex){OperationStatus.Text=$"Optimization stopped: {ex.Message}";}}
-    void Restore_Click(object sender,RoutedEventArgs e){try{var n=_app.Restore();TweaksText.Text=$"{_app.Changes.Count} / {TweakCatalog.All.Count}";OperationStatus.Text=$"Restored {n} tracked changes.";}catch(Exception ex){OperationStatus.Text=$"Restore stopped: {ex.Message}";}}
-    void Refresh_Click(object sender,RoutedEventArgs e){RefreshStatus();RefreshMetrics();TweaksText.Text=$"{_app.Changes.Count} / {TweakCatalog.All.Count}";}
-    async void Activate_Click(object sender,RoutedEventArgs e){OperationStatus.Text="Contacting license server…";var ok=await _app.ActivateAsync(LicenseEndpoint.Text,LicenseKey.Text.Trim());OperationStatus.Text=ok?"License activated successfully.":"License activation failed.";if(ok){_rolledBack=false;_lastValidation=DateTime.UtcNow;}RefreshStatus();}
-    protected override void OnClosed(EventArgs e){_timer.Stop();_monitor.Dispose();base.OnClosed(e);}
+
+    void RefreshMetrics()
+    {
+        RustText.Text = _app.RustRunning() ? "RUST RUNNING" : "RUST READY";
+        ChangesText.Text = $"CHANGES {_app.Changes.Count}";
+        try
+        {
+            var report = _hardware.Analyze();
+            GpuText.Text = report.Gpu.Length > 28 ? report.Gpu[..28] + "…" : report.Gpu;
+        }
+        catch { GpuText.Text = "GPU —"; }
+    }
+
+    void SetStatus(string text, bool good = true)
+    {
+        StatusText.Text = text;
+        StatusText.Foreground = good ? System.Windows.Media.Brushes.LightGreen : System.Windows.Media.Brushes.Orange;
+        OperationStatus.Text = text;
+        ChangesText.Text = $"CHANGES {_app.Changes.Count}";
+    }
+
+    void ShowHardwareReport()
+    {
+        HardwareReport.Text = _app.HardwareSummary() + "\n\n" + _suite.AdvancedHardwareReport();
+    }
+
+    void OptimizeAll_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var windows = _suite.OptimizeWindows();
+            var power = _suite.SelectHighPerformancePowerPlan();
+            var dns = _suite.FlushDns();
+            SetStatus($"Optimization complete: {windows.Count(x => x.Changed)} Windows changes, power plan={power.Changed}, DNS={dns.Changed}.");
+        }
+        catch (Exception ex) { SetStatus("Optimization error: " + ex.Message, false); }
+    }
+
+    void Windows_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var r = _suite.OptimizeWindows();
+            SetStatus($"Windows optimization: {r.Count(x => x.Changed)} changes applied.");
+        }
+        catch (Exception ex) { SetStatus("Windows optimization failed: " + ex.Message, false); }
+    }
+
+    void Cleaner_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var r = _suite.CleanTempFiles();
+            SetStatus($"Cleaner finished: {r.Sum(x => x.Changed ? 1 : 0)} locations processed.");
+        }
+        catch (Exception ex) { SetStatus("Cleaner failed: " + ex.Message, false); }
+    }
+
+    void Network_Click(object sender, RoutedEventArgs e)
+    {
+        var r = _suite.FlushDns();
+        SetStatus(r.Details.Length > 0 ? $"Network: {r.Details}" : "DNS cache flushed.", r.Changed);
+    }
+
+    void Power_Click(object sender, RoutedEventArgs e)
+    {
+        var r = _suite.SelectHighPerformancePowerPlan();
+        SetStatus(r.Changed ? "High-performance power plan selected." : "Power plan was not changed.", r.Changed);
+    }
+
+    void Hardware_Click(object sender, RoutedEventArgs e)
+    {
+        ShowHardwareReport();
+        SetStatus("Hardware analysis refreshed. OC/undervolt recommendations are hardware-specific.");
+    }
+
+    void Rust_Click(object sender, RoutedEventArgs e)
+    {
+        var profile = _profiles.Describe(RustProfile.Competitive);
+        SetStatus("Rust Competitive profile selected: " + profile);
+    }
+
+    void Restore_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var n = _app.Restore();
+            SetStatus($"Restored {n} tracked changes.");
+        }
+        catch (Exception ex) { SetStatus("Restore failed: " + ex.Message, false); }
+    }
+
+    void Refresh_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshMetrics();
+        ShowHardwareReport();
+        SetStatus("Dashboard refreshed.");
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _timer.Stop();
+        _monitor.Dispose();
+        base.OnClosed(e);
+    }
 }
