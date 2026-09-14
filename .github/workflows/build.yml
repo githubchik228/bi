@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+      - undopti/full-optimizer
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -19,11 +23,11 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore solution
-        run: dotnet restore bi.sln -p:Platform=x64
+      - name: Restore
+        run: dotnet restore src/RustPerformanceSuite/RustPerformanceSuite.csproj -p:Platform=x64
 
-      - name: Build solution
-        run: dotnet build bi.sln -c Release -p:Platform=x64 --no-restore
+      - name: Build
+        run: dotnet build src/RustPerformanceSuite/RustPerformanceSuite.csproj -c Release -p:Platform=x64 --no-restore
 
       - name: Publish UndOpti
         run: >
@@ -36,24 +40,8 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           -o artifacts/UndOpti
 
-      - name: Build Keygen
-        run: >
-          dotnet publish tools/UndOptiKeygen/UndOptiKeygen.csproj
-          -c Release
-          -r win-x64
-          --self-contained true
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -o artifacts/UndOptiKeygen
-
       - name: Upload UndOpti
         uses: actions/upload-artifact@v4
         with:
           name: UndOpti
           path: artifacts/UndOpti/
-
-      - name: Upload UndOpti Keygen
-        uses: actions/upload-artifact@v4
-        with:
-          name: UndOptiKeygen
-          path: artifacts/UndOptiKeygen/

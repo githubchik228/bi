@@ -12,7 +12,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="**/*.cs" Exclude="bin/**;obj/**" />
+    <Compile Include="**/*.cs" Exclude="bin/**;obj/**;License/**/*.cs;OfflineLicensing/**/*.cs;Models/LicenseInfo.cs;Services/LicenseService.cs;Services/OfflineLicenseService.cs;Services/OfflineLicenseVerifier.cs;Services/RemoteLicenseClient.cs;Services/HwidService.cs;Services/HardwareIdService.cs" />
     <Using Include="System" />
     <Using Include="System.IO" />
     <Using Include="System.Net.Http" />
